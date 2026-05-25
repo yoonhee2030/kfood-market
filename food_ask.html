@@ -679,8 +679,8 @@ async function makeReport() {
 
   let aiComps = null;
   try {
-    // ── Step 1: Serper로 실시간 검색
-    const serperKey = '7636913fe6dd5b2a71e1d35597f6d3ab182ef41f';
+    // ── Step 1: Serper로 실시간 검색 (UI에서 저장한 키 우선, 없으면 기본 키)
+    const serperKey = localStorage.getItem('serper_key') || '7636913fe6dd5b2a71e1d35597f6d3ab182ef41f';
     let snippets = '';
 
     if (serperKey) {
@@ -1006,9 +1006,10 @@ function showReport(aiComps) {
     setTimeout(async () => {
       for (let i = 0; i < imgComps.length; i++) {
         const comp = imgComps[i];
-        if (!comp.imageQuery) continue;
+        const iq = comp.imageQuery || `${comp.n||''} ${st.cat||''}`.trim();
+        if (!iq) continue;
         try {
-          const q = `${comp.imageQuery} amazon.com product image`;
+          const q = `${iq} amazon.com product image`;
           const iRes = await fetch('https://google.serper.dev/images', {
             method: 'POST',
             headers: { 'X-API-KEY': imgKey, 'Content-Type': 'application/json' },
