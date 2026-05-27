@@ -494,6 +494,7 @@ function getCatKey() {
   if (st.cat.includes('라면')) return 'ramen';
   if (st.cat.includes('과자')) return 'snack';
   if (st.cat.includes('건강')) return 'health';
+  if (st.cat.includes('수산')) return 'seafood';
   return 'beverage';
 }
 function getMktKey() {
@@ -584,7 +585,7 @@ function pick(c, btn) {
 }
 
 function doMkt() {
-  const catComments = {sauce:'장류·소스는 K푸드 중 블루오션이에요!',kim:'조미김은 미국에서 건강 스낵으로 뜨고 있어요!',ramen:'라면은 K푸드 수출 1위 품목이에요!',snack:'K과자는 K팝 팬덤과 함께 인기예요!',health:'건강식품은 프리미엄 포지션이 가능해요!',beverage:'기능성 음료 트렌드에 올라탈 수 있어요!'};
+  const catComments = {sauce:'장류·소스는 K푸드 중 블루오션이에요!',kim:'조미김은 미국에서 건강 스낵으로 뜨고 있어요!',ramen:'라면은 K푸드 수출 1위 품목이에요!',snack:'K과자는 K팝 팬덤과 함께 인기예요!',health:'건강식품은 프리미엄 포지션이 가능해요!',beverage:'기능성 음료 트렌드에 올라탈 수 있어요!',seafood:'수산식품은 상온 가공품으로 검역 통과가 쉬워 수출 유망 품목이에요!'};
   const key = getCatKey();
   addMsg('ai', `**${st.cat}** — ${catComments[key]||''}\n\n어느 나라 시장이 궁금하세요?`, MKTS);
 }
@@ -720,15 +721,13 @@ async function makeReport() {
 
   let aiComps = null;
   try {
-    // ── Step 1: Serper로 실시간 검색 (UI에서 저장한 키 우선, 없으면 기본 키)
-    const serperKey = localStorage.getItem('serper_key') || '7636913fe6dd5b2a71e1d35597f6d3ab182ef41f';
+    // ── Step 1: Serper로 실시간 검색
+    const serperKey = '7636913fe6dd5b2a71e1d35597f6d3ab182ef41f';
     let snippets = '';
 
     if (serperKey) {
       const mktMap = {'미국':'amazon.com site:amazon.com','일본':'amazon.co.jp site:amazon.co.jp','베트남':'shopee.vn','태국':'shopee.co.th','EU':'amazon.de site:amazon.de'};
-      const glhlMap = {'미국':{gl:'us',hl:'en'},'일본':{gl:'jp',hl:'ja'},'베트남':{gl:'vn',hl:'vi'},'태국':{gl:'th',hl:'th'},'EU':{gl:'de',hl:'en'}};
       const searchSite = mktMap[st.mkt] || 'amazon.com site:amazon.com';
-      const glhl = glhlMap[st.mkt] || {gl:'us',hl:'en'};
       const query = `${st.pname} ${st.cat} ${searchSite}`;
 
       try {
@@ -736,7 +735,7 @@ async function makeReport() {
         const sRes = await fetch('https://google.serper.dev/search', {
           method: 'POST',
           headers: { 'X-API-KEY': serperKey, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ q: query, gl: glhl.gl, hl: glhl.hl, num: 8 })
+          body: JSON.stringify({ q: query, gl: 'us', hl: 'en', num: 8 })
         });
         const sData = await sRes.json();
         snippets = (sData.organic || []).slice(0,6).map(r =>
@@ -749,7 +748,6 @@ async function makeReport() {
     }
 
     // ── Step 2: Gemini로 분석
-    const mktSite = {'미국':'amazon.com (미국)','일본':'amazon.co.jp (일본)','베트남':'Shopee/Lazada (베트남)','태국':'Shopee/Lazada (태국)','EU':'amazon.de 등 (유럽)'}[st.mkt] || 'amazon.com (미국)';
     const compPrompt = `아래 제품의 ${st.mkt||'미국'} 시장 경쟁사를 분석해줘.
 
 ## 분석 제품
@@ -761,17 +759,11 @@ async function makeReport() {
 
 ${snippets ? `## 실시간 검색 결과\n${snippets}\n\n위 검색 결과를 최대한 활용해서 실제 경쟁 제품을 분석해줘.` : '## 주의\n검색 데이터 없음. 일반 지식 기반으로 답변.'}
 
-## 필수 규칙 (반드시 지켜)
-- 경쟁사는 **${mktSite}에서 실제로 판매 중인 제품**만 골라줘. 그 시장에서 안 파는 제품은 절대 넣지 마.
-- **한국 국내 전용 사이트(쿠팡·네이버 등)나 한국 내수용 제품은 제외.** 단, 그 시장에 실제로 수출·판매되는 한국 브랜드(예: bibigo, 비비고)는 포함 가능.
-- 가격(p)·평점(rating)·리뷰(reviews)는 모두 **그 시장 기준**(미국이면 USD, 미국 아마존 리뷰 수).
-- "n"(브랜드명+제품명)과 "imageQuery"는 **영문**으로 작성(${st.mkt}이 일본이면 일본어/영문). 그래야 현지 상품 이미지가 정확히 검색돼.
-
 ## 출력 형식
 아래 JSON만 반환. 다른 텍스트 없이.
 [
   {
-    "n": "브랜드명 + 제품명 (영문)",
+    "n": "브랜드명 + 제품명",
     "p": "$가격",
     "rating": "⭐4.X",
     "reviews": "숫자+건",
@@ -779,7 +771,7 @@ ${snippets ? `## 실시간 검색 결과\n${snippets}\n\n위 검색 결과를 �
     "wk": "약점 한 단어",
     "detail": "제품 설명 2문장",
     "insight": "우리 제품 대비 시사점 1문장",
-    "imageQuery": "구글 이미지 검색용 영문 쿼리. 브랜드명(영문)+제품명+용량/규격+특징+amazon 포함. 예: GimMe Organics roasted seaweed snack 0.17oz sea salt amazon product"
+    "imageQuery": "구글 이미지 검색용 영문 쿼리. 브랜드명+제품명+용량/규격+특징+amazon 포함. 예: GimMe Organics roasted seaweed snack 0.17oz sea salt amazon product"
   }
 ]`;
 
@@ -796,6 +788,12 @@ ${snippets ? `## 실시간 검색 결과\n${snippets}\n\n위 검색 결과를 �
     const match = raw.match(/\[[\s\S]*\]/);
     if (match) {
       aiComps = JSON.parse(match[0]);
+
+      // 경쟁사별 이미지 - 딥카피해서 전역에 저장
+      if (aiComps && aiComps.length > 0) {
+        window._imgComps = JSON.parse(JSON.stringify(aiComps));
+        window._imgKey = serperKey;
+      }
     }
   } catch(e) {
     console.log('경쟁사 조회 실패, 기본 데이터 사용:', e.message);
@@ -910,7 +908,7 @@ function showReport(aiComps) {
   const fallbackEmoji = catEmoji[getCatKey()] || '🍽️';
 
   const compHtml=`<table class="ctable">
-    <thead><tr><th style="width:64px;"></th><th>브랜드</th><th>가격</th><th>강점</th><th>약점</th><th>리뷰</th></tr></thead>
+    <thead><tr><th style="width:40px;"></th><th>브랜드</th><th>가격</th><th>강점</th><th>약점</th><th>리뷰</th></tr></thead>
     <tbody>${comps.map((c,i)=>{
       const isMe=i===comps.length-1;
       const hasDetail=c.detail;
@@ -919,10 +917,10 @@ function showReport(aiComps) {
       const rowCursor=hasDetail?'cursor:pointer;':'';
       const imgUrl = isMe ? null : c.imageUrl || null;
       const imgHtml = isMe
-        ? `<td style="text-align:center;font-size:26px;width:64px;min-width:64px;">👑</td>`
-        : `<td style="padding:4px 6px;text-align:center;width:64px;min-width:64px;max-width:64px;overflow:hidden;">
-            <img id="comp-img-${i}" src="" referrerpolicy="no-referrer" style="display:none;width:54px;height:54px;min-width:54px;max-width:54px;object-fit:contain;border-radius:7px;background:#fff;border:1px solid rgba(255,255,255,0.06);" onerror="this.style.display='none';document.getElementById('comp-emoji-${i}').style.display='inline';">
-            <span id="comp-emoji-${i}" style="font-size:28px;">${fallbackEmoji}</span>
+        ? `<td style="text-align:center;font-size:16px;width:44px;min-width:44px;">👑</td>`
+        : `<td style="padding:4px 6px;text-align:center;width:44px;min-width:44px;max-width:44px;overflow:hidden;">
+            <img id="comp-img-${i}" src="" style="display:none;width:36px;height:36px;min-width:36px;max-width:36px;object-fit:contain;border-radius:5px;background:#fff;border:1px solid rgba(255,255,255,0.06);" onerror="this.style.display='none';document.getElementById('comp-emoji-${i}').style.display='inline';">
+            <span id="comp-emoji-${i}" style="font-size:18px;">${fallbackEmoji}</span>
            </td>`;
 
       return `<tr style="${rowStyle}${rowCursor}" ${hasDetail?`onclick="toggleDetail('${detailId}')"`:''}> 
@@ -1040,30 +1038,27 @@ function showReport(aiComps) {
   document.body.appendChild(modal);
   window._RD={pname,def,pnum,vc:vcHex,now,mk,ck,comps,isAiComp};
 
-  // 경쟁사별 이미지 - 실시간(Gemini)·기본 데이터 모두 사진 로드
-  const imgKey = localStorage.getItem('serper_key') || '7636913fe6dd5b2a71e1d35597f6d3ab182ef41f';
+  // 경쟁사별 이미지 - site:amazon.com 연산자로 백그라운드 로드
+  const imgComps = window._imgComps;
+  const imgKey = window._imgKey;
   window._imgComps = null;
   window._imgKey = null;
-  const imgTargets = comps.slice(0, -1); // 마지막 행은 내 제품(👑)이라 제외
-  const imgGlhl = {'미국':{gl:'us',hl:'en',site:'amazon.com'},'일본':{gl:'jp',hl:'ja',site:'amazon.co.jp'},'베트남':{gl:'vn',hl:'vi',site:'shopee.vn'},'태국':{gl:'th',hl:'th',site:'shopee.co.th'},'EU':{gl:'de',hl:'en',site:'amazon.de'}}[st.mkt] || {gl:'us',hl:'en',site:'amazon.com'};
 
-  if (imgKey && imgTargets.length) {
+  if (imgComps && imgKey) {
     setTimeout(async () => {
-      for (let i = 0; i < imgTargets.length; i++) {
-        const comp = imgTargets[i];
-        const iq = comp.imageQuery || `${comp.n||''} ${st.cat||''}`.trim();
-        if (!iq) continue;
+      for (let i = 0; i < imgComps.length; i++) {
+        const comp = imgComps[i];
+        if (!comp.imageQuery) continue;
         try {
-          const q = `${iq} ${imgGlhl.site} product image`;
+          const q = `${comp.imageQuery} amazon.com product image`;
           const iRes = await fetch('https://google.serper.dev/images', {
             method: 'POST',
             headers: { 'X-API-KEY': imgKey, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ q, gl: imgGlhl.gl, hl: imgGlhl.hl, num: 5 })
+            body: JSON.stringify({ q, gl: 'us', hl: 'en', num: 5 })
           });
           const iData = await iRes.json();
           const imgs = (iData.images || []).filter(img => img.imageUrl);
           if (imgs.length > 0) {
-            comp.imageUrl = imgs[0].imageUrl; // 다운로드 진단서에서 재사용
             const modal = document.getElementById('modal');
             if (!modal) continue;
             const imgEl = modal.querySelector(`#comp-img-${i}`);
@@ -1105,9 +1100,7 @@ function showReport(aiComps) {
 }
 
 function dlReport() {
-  const {pname,def,pnum,vc,now,mk,ck,comps}=window._RD;
-  const dlCatEmoji={sauce:'🫙',kim:'🌿',ramen:'🍜',snack:'🍪',health:'💊',beverage:'🥤'};
-  const dlFallbackEmoji=dlCatEmoji[ck]||'🍽️';
+  const {pname,def,pnum,vc,now,mk,comps}=window._RD;
   const rankColors=['#f97316','#60a5fa','#a78bfa'];
   const range=def.pmax-def.pmin;
   const myP=Math.min(Math.max((pnum-def.pmin)/range*100,2),98);
@@ -1178,16 +1171,10 @@ ${def.rnk.map((m,i)=>`<div class="brow"><span>${m.f} <strong>${m.c}</strong>${i=
 </div></div>
 
 <div class="sec"><div class="stl">🏆 경쟁사 비교 (아마존 실제 판매 기준)</div><div class="sb" style="padding:0;overflow:hidden;">
-<table class="tbl"><thead><tr><th style="width:68px;"></th><th>브랜드</th><th>가격</th><th>강점</th><th>약점</th><th>리뷰</th></tr></thead><tbody>
+<table class="tbl"><thead><tr><th>브랜드</th><th>가격</th><th>강점</th><th>약점</th><th>리뷰</th></tr></thead><tbody>
 ${comps.map((c,i)=>{
   const isMe=i===comps.length-1;
-  const imgCell=isMe
-    ? `<td style="text-align:center;font-size:26px;width:68px;">👑</td>`
-    : (c.imageUrl
-        ? `<td style="text-align:center;width:68px;padding:6px;"><img src="${c.imageUrl}" referrerpolicy="no-referrer" style="width:54px;height:54px;object-fit:contain;border-radius:7px;background:#fff;border:1px solid #e5e7eb;" onerror="this.outerHTML='${dlFallbackEmoji}';"></td>`
-        : `<td style="text-align:center;font-size:28px;width:68px;">${dlFallbackEmoji}</td>`);
   return `<tr style="${isMe?'background:#fff7ed;border-top:2px solid #fed7aa;':''}">
-    ${imgCell}
     <td style="font-weight:${isMe?700:400};color:${isMe?'#c2410c':'#1f2937'};">${isMe?'👑 ':''}${c.n}</td>
     <td style="font-family:'JetBrains Mono',monospace;color:#059669;">${c.p}</td>
     <td><span class="bg">${c.st}</span></td>
@@ -1195,7 +1182,7 @@ ${comps.map((c,i)=>{
     <td class="note">${c.rating||c.note||''}</td>
   </tr>
   ${c.detail?`<tr style="${isMe?'background:#fffbf7;':'background:#fafafa;'}">
-    <td colspan="6" style="padding:10px 12px;border-bottom:1px solid #f3f4f6;">
+    <td colspan="5" style="padding:10px 12px;border-bottom:1px solid #f3f4f6;">
       <div style="font-size:11px;color:#6b7280;margin-bottom:4px;">${c.rating||''} · 리뷰 ${c.reviews||''}</div>
       <div style="font-size:12px;color:#374151;line-height:1.7;margin-bottom:6px;">${c.detail}</div>
       <div style="font-size:11px;padding:6px 10px;background:#fff7ed;border-left:3px solid #f97316;border-radius:3px;color:#92400e;">💡 ${c.insight||''}</div>
