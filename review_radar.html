@@ -504,33 +504,58 @@ async function serperShoppingSearch(query){
   }catch(e){return null;}
 }
 
+const CAT_EN={noodles:'noodles ramen',kimchi:'kimchi fermented',snacks:'snacks',sauces:'sauce',rice:'rice grain',seafood:'seafood seaweed',drinks:'drink tea',frozen:'frozen meal',health:'supplement health'};
+const AMAZON_HOST={USA:'amazon.com',Japan:'amazon.co.jp',UK:'amazon.co.uk',Germany:'amazon.de',Canada:'amazon.ca',Australia:'amazon.com.au',Singapore:'amazon.sg','Southeast Asia':'amazon.com'};
+
+const KNOWN_BRANDS=['Bibigo','CJ','Nongshim','Ottogi','Sempio','Samyang','Wang','Pulmuone','Chung Jung One','Jongga','Jayone','Haitai','Lotte','Crown','Binggrae','Dongwon','Daesang','Sajo','Shirakiku','Annie Chun','Nasoya','Kikkoman','House Foods','Maruchan','Nissin','Paldo','Surasang','O\'Food','Choripdong','Assi','Roland','Tom Yum','Kimnori','Yopokki','Mama Sita','Bachan','Mother In Law','Mother-in-Law','Seoul Mills','Wando','Daesang','KPOP','Mom\'s'];
+const STOP_WORDS=/^(best|top|buy|shop|new|cheap|sale|free|get|for|the|a|an|amazon|com|korean|asian|japanese|chinese|thai|vietnamese|organic|natural|premium|fresh|delicious|authentic|traditional|online|wow|woo|dried|frozen|pack|set|bulk|value|original|gourmet|healthy|spicy|sweet|crispy|crunchy|easy|quick|instant|home|family|kids|baby|low|high|all|every|some|many|few|sale|deal|hot|cold|raw|cooked|wild|farm|pure|real|true|good|great|nice|special)/i;
+
 function extractBrand(title){
-  const t=title.replace(/\s*[-–|]\s*(amazon|walmart|target|ebay|instacart|kroger).*$/i,'').replace(/\s*\(.*?\)\s*$/,'').trim();
-  const known=['Bibigo','CJ','Nongshim','Ottogi','Sempio','Samyang','Wang','Pulmuone','Chung Jung One','HaiTai','Lotte','Crown','Binggrae','Dongwon','Daesang','Shirakiku','Annie Chun','Nasoya','Kikkoman','House Foods','Maruchan','Nissin'];
-  for(const b of known){
-    if(new RegExp('^'+b,'i').test(t)) return b;
+  let t=title.replace(/\s*[-–—|:]\s*(amazon|walmart|target|ebay|instacart|kroger|costco|sam's).*$/i,'')
+    .replace(/\s*\(.*?\)\s*$/,'')
+    .replace(/\s*[,;.].*$/,'')
+    .trim();
+  for(const b of KNOWN_BRANDS){
+    if(new RegExp('(^|\\s|by\\s)'+b.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b','i').test(t)) return b;
   }
+  const byMatch=t.match(/\bby\s+([A-Z][A-Za-z0-9'&]+(?:\s+[A-Z][A-Za-z0-9'&]+)?)/);
+  if(byMatch) return byMatch[1];
   const words=t.split(/\s+/);
-  if(words.length>=2&&!/^(best|top|buy|shop|new|cheap|sale|free|get|for|the|amazon|korean|asian|japanese|chinese|thai|organic|natural|premium|fresh|delicious|authentic|traditional)/i.test(words[0])){
-    return words[0]+' '+words[1];
-  }
-  return words[0]||t.slice(0,20);
+  if(!words.length) return null;
+  const w1=words[0],w2=words[1]||'';
+  if(STOP_WORDS.test(w1)) return null;
+  if(!/^[A-Z]/.test(w1)) return null;
+  if(w2&&/^[A-Z]/.test(w2)&&!STOP_WORDS.test(w2)) return w1+' '+w2;
+  return w1;
 }
 
 function isGenericTerm(s){
-  return !s||s.length<2||/^(amazon|best|top|buy|shop|list|review|product|food|korean|asian|japan|us|the|a$|an$|new|cheap|sale|fresh|organic|natural|premium)/i.test(s.trim());
+  if(!s||s.length<2) return true;
+  if(STOP_WORDS.test(s.trim())) return true;
+  if(/^[a-z]/.test(s.trim())) return true;
+  return false;
+}
+
+function isAmazonLink(url){
+  return !!url&&/(^|\/\/|\.)amazon\.(com|co\.jp|co\.uk|de|ca|com\.au|sg)\b/i.test(url);
 }
 
 function extractCompetitorsFromSerper(sr1,sr2,shopData){
   const seen=new Set(),results=[];
-  const shopping=[...(shopData?.shopping||[]),...(sr1?.shopping||[]),...(sr2?.shopping||[])];
+  const shoppingAll=[...(shopData?.shopping||[]),...(sr1?.shopping||[]),...(sr2?.shopping||[])];
+  const shopping=shoppingAll.filter(function(it){
+    const src=(it.source||it.seller||'').toLowerCase();
+    const link=it.link||it.url||'';
+    return src.includes('amazon')||isAmazonLink(link)||(!src&&!link);
+  });
   for(const item of shopping){
     if(results.length>=6) break;
     const title=(item.title||'').trim();
     if(!title) continue;
     const brand=extractBrand(title);
+    if(!brand||isGenericTerm(brand)) continue;
     const key=brand.toLowerCase().replace(/\s+/g,'');
-    if(seen.has(key)||isGenericTerm(brand)) continue;
+    if(seen.has(key)) continue;
     seen.add(key);
     results.push({
       name:brand,
@@ -539,20 +564,23 @@ function extractCompetitorsFromSerper(sr1,sr2,shopData){
       rating:item.rating||null,
       reviewCount:item.ratingCount?(item.ratingCount+'건+'):null,
       imageUrl:item.imageUrl||null,
+      link:item.link||null,
       _src:'shop'
     });
   }
   if(results.length<4){
-    const organic=[...(sr1?.organic||[]),...(sr2?.organic||[])];
+    const organicAll=[...(sr1?.organic||[]),...(sr2?.organic||[])];
+    const organic=organicAll.filter(function(it){return isAmazonLink(it.link);});
     for(const item of organic){
       if(results.length>=6) break;
       const title=(item.title||'').trim();
       if(!title) continue;
       const brand=extractBrand(title);
+      if(!brand||isGenericTerm(brand)) continue;
       const key=brand.toLowerCase().replace(/\s+/g,'');
-      if(seen.has(key)||isGenericTerm(brand)) continue;
+      if(seen.has(key)) continue;
       seen.add(key);
-      results.push({name:brand,productTitle:title,price:null,rating:null,reviewCount:null,imageUrl:null,_src:'organic'});
+      results.push({name:brand,productTitle:title,price:null,rating:null,reviewCount:null,imageUrl:null,link:item.link,_src:'organic'});
     }
   }
   return results;
@@ -601,11 +629,13 @@ function mergeCompetitorData(serperComps,aiData,product,market,brand){
   };
 }
 
-async function enrichCompetitorImages(competitors,product,category){
+async function enrichCompetitorImages(competitors,product,category,market){
+  const host=AMAZON_HOST[market]||'amazon.com';
+  const catEn=CAT_EN[category]||category;
   const promises=competitors.map(async function(c){
     if(c.imageUrl) return;
     const cleanName=(c.name||'').replace(/\([^)]*\)/g,'').trim();
-    const q=cleanName?cleanName+' '+product+' product':product+' '+category;
+    const q='site:'+host+' '+cleanName+' '+catEn+' product';
     c.imageUrl=await serperImageSearch(q);
   });
   await Promise.all(promises);
@@ -644,10 +674,11 @@ async function runAnalysis(){
 
   try {
     setStep(STEPS[0]);
-    const mktLabel=market==='USA'?'amazon.com':market==='Japan'?'amazon japan':market==='UK'?'amazon uk':'amazon';
-    const q1=product+' '+category+' '+mktLabel+' best sellers';
-    const q2=product+' korean food '+market+' competitors brands';
-    const qShop=product+' '+category+' amazon';
+    const host=AMAZON_HOST[market]||'amazon.com';
+    const catEn=CAT_EN[category]||category;
+    const q1='site:'+host+' '+product+' '+catEn;
+    const q2='site:'+host+' korean '+catEn+' best sellers';
+    const qShop=product+' korean '+catEn+' '+host;
 
     const [sr1,sr2,shopData]=await Promise.all([
       serperSearch(q1).catch(()=>null),
@@ -685,7 +716,7 @@ async function runAnalysis(){
     data._serperFound=serperComps.length;
 
     setStep('🖼️ 제품 이미지 검색 중...');
-    await enrichCompetitorImages(data.competitors,product,category);
+    await enrichCompetitorImages(data.competitors,product,category,market);
 
     clearInterval(iv);
     setStep(STEPS[4]);
