@@ -540,6 +540,26 @@ function isAmazonLink(url){
   return !!url&&/(^|\/\/|\.)amazon\.(com|co\.jp|co\.uk|de|ca|com\.au|sg)\b/i.test(url);
 }
 
+function isAmazonProductLink(url){
+  if(!url) return false;
+  return /amazon\.(com|co\.jp|co\.uk|de|ca|com\.au|sg)\/.*?(\/dp\/[A-Z0-9]{6,}|\/gp\/product\/[A-Z0-9]{6,})/i.test(url);
+}
+
+async function serperAmazonProductLookup(query){
+  try{
+    const r=await fetch('https://google.serper.dev/search',{
+      method:'POST',
+      headers:{'X-API-KEY':SERPER_KEY,'Content-Type':'application/json'},
+      body:JSON.stringify({q:query,num:5,gl:'us',hl:'en'})
+    });
+    if(!r.ok) return null;
+    const d=await r.json();
+    const item=(d.organic||[]).find(function(it){return isAmazonProductLink(it.link);});
+    if(!item) return null;
+    return {title:item.title,link:item.link,snippet:item.snippet||''};
+  }catch(e){return null;}
+}
+
 function extractCompetitorsFromSerper(sr1,sr2,shopData){
   const seen=new Set(),results=[];
   const shoppingAll=[...(shopData?.shopping||[]),...(sr1?.shopping||[]),...(sr2?.shopping||[])];
@@ -568,22 +588,58 @@ function extractCompetitorsFromSerper(sr1,sr2,shopData){
       _src:'shop'
     });
   }
-  if(results.length<4){
-    const organicAll=[...(sr1?.organic||[]),...(sr2?.organic||[])];
-    const organic=organicAll.filter(function(it){return isAmazonLink(it.link);});
-    for(const item of organic){
-      if(results.length>=6) break;
-      const title=(item.title||'').trim();
-      if(!title) continue;
-      const brand=extractBrand(title);
-      if(!brand||isGenericTerm(brand)) continue;
-      const key=brand.toLowerCase().replace(/\s+/g,'');
-      if(seen.has(key)) continue;
-      seen.add(key);
-      results.push({name:brand,productTitle:title,price:null,rating:null,reviewCount:null,imageUrl:null,link:item.link,_src:'organic'});
-    }
+  const organicAll=[...(sr1?.organic||[]),...(sr2?.organic||[])];
+  const organic=organicAll.filter(function(it){return isAmazonProductLink(it.link);});
+  for(const item of organic){
+    if(results.length>=6) break;
+    const title=(item.title||'').trim();
+    if(!title) continue;
+    const brand=extractBrand(title);
+    if(!brand||isGenericTerm(brand)) continue;
+    const key=brand.toLowerCase().replace(/\s+/g,'');
+    if(seen.has(key)) continue;
+    seen.add(key);
+    const snip=item.snippet||'';
+    const priceMatch=snip.match(/\$[\d,]+\.?\d*(?:\s*-\s*\$[\d,]+\.?\d*)?/);
+    const ratingMatch=snip.match(/([0-5]\.\d)\s*(?:out of|\/|stars|★)/i);
+    const reviewMatch=snip.match(/([\d,]{2,})\s*(?:ratings?|reviews?)/i);
+    results.push({
+      name:brand,
+      productTitle:title,
+      price:priceMatch?priceMatch[0]:null,
+      rating:ratingMatch?parseFloat(ratingMatch[1]):null,
+      reviewCount:reviewMatch?(reviewMatch[1]+'건+'):null,
+      imageUrl:null,
+      link:item.link,
+      _src:'organic'
+    });
   }
   return results;
+}
+
+async function enrichCompetitorsWithAmazonLookup(competitors,product,category,market){
+  const host=AMAZON_HOST[market]||'amazon.com';
+  const catEn=CAT_EN[category]||category;
+  const promises=competitors.map(async function(c){
+    if(c.price&&c.rating&&c.imageUrl) return;
+    const info=await serperAmazonProductLookup('site:'+host+' inurl:dp '+c.name+' '+catEn);
+    if(!info) return;
+    const snip=info.snippet||'';
+    if(!c.price){
+      const m=snip.match(/\$[\d,]+\.?\d*(?:\s*-\s*\$[\d,]+\.?\d*)?/);
+      if(m) c.price=m[0];
+    }
+    if(!c.rating){
+      const m=snip.match(/([0-5]\.\d)\s*(?:out of|\/|stars|★)/i);
+      if(m) c.rating=parseFloat(m[1]);
+    }
+    if(!c.reviewCount){
+      const m=snip.match(/([\d,]{2,})\s*(?:ratings?|reviews?)/i);
+      if(m) c.reviewCount=m[1]+'건+';
+    }
+    if(!c.link) c.link=info.link;
+  });
+  await Promise.all(promises);
 }
 
 function mergeCompetitorData(serperComps,aiData,product,market,brand){
@@ -676,9 +732,9 @@ async function runAnalysis(){
     setStep(STEPS[0]);
     const host=AMAZON_HOST[market]||'amazon.com';
     const catEn=CAT_EN[category]||category;
-    const q1='site:'+host+' '+product+' '+catEn;
-    const q2='site:'+host+' korean '+catEn+' best sellers';
-    const qShop=product+' korean '+catEn+' '+host;
+    const q1='site:'+host+' inurl:dp korean '+catEn;
+    const q2='site:'+host+' inurl:dp '+catEn+' best sellers';
+    const qShop='korean '+catEn+' '+host;
 
     const [sr1,sr2,shopData]=await Promise.all([
       serperSearch(q1).catch(()=>null),
@@ -715,6 +771,8 @@ async function runAnalysis(){
     data._isFallback=!aiData;
     data._serperFound=serperComps.length;
 
+    setStep('💲 Amazon 가격·리뷰 조회 중...');
+    await enrichCompetitorsWithAmazonLookup(data.competitors,product,category,market);
     setStep('🖼️ 제품 이미지 검색 중...');
     await enrichCompetitorImages(data.competitors,product,category,market);
 
