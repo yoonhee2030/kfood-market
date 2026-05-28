@@ -175,9 +175,18 @@ a{color:var(--ac);text-decoration:none}
 .comp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;margin-bottom:28px}
 .comp-card{
   background:var(--bg2);border:1px solid var(--bd);border-radius:var(--r);
-  padding:20px;transition:border-color .2s,transform .2s,box-shadow .2s;
+  padding:0;transition:border-color .2s,transform .2s,box-shadow .2s;
   position:relative;overflow:hidden;
 }
+.comp-img{
+  width:100%;height:160px;background:var(--bg3) center/cover no-repeat;
+  border-bottom:1px solid var(--bd);position:relative;
+}
+.comp-img.no-img{
+  display:flex;align-items:center;justify-content:center;
+  color:var(--tx3);font-size:32px;
+}
+.comp-body{padding:18px}
 .comp-card:hover{border-color:var(--bd2);transform:translateY(-2px);box-shadow:var(--sh)}
 .comp-card::before{
   content:'';position:absolute;top:0;left:0;right:0;height:3px;
@@ -470,6 +479,19 @@ async function serperSearch(query){
   return r.json();
 }
 
+async function serperImageSearch(query){
+  try{
+    const r=await fetch('https://google.serper.dev/images',{
+      method:'POST',
+      headers:{'X-API-KEY':SERPER_KEY,'Content-Type':'application/json'},
+      body:JSON.stringify({q:query,num:3,gl:'us',hl:'en'})
+    });
+    if(!r.ok) return null;
+    const d=await r.json();
+    return d.images?.[0]?.imageUrl || null;
+  }catch(e){return null;}
+}
+
 async function geminiCall(prompt){
   const r=await fetch(PROXY,{
     method:'POST',
@@ -535,17 +557,34 @@ async function runAnalysis(){
         }
       }
     }
+    const isAiOk = !!data;
     if(!data) data = buildFallbackData(product, market, brand);
+    data._isFallback = !isAiOk;
+
+    setStep('🖼️ 제품 이미지 검색 중...');
+    if(data.competitors && data.competitors.length){
+      const imgPromises = data.competitors.map(c=>{
+        const cleanName = (c.name||'').replace(/\([^)]*\)/g,'').trim();
+        const q = cleanName ? cleanName+' '+product+' product' : product+' '+category;
+        return serperImageSearch(q);
+      });
+      const imgs = await Promise.all(imgPromises);
+      data.competitors.forEach((c,i)=>{ c.imageUrl = imgs[i]; });
+    }
 
     clearInterval(iv);
     setStep(STEPS[4]);
-    await new Promise(r=>setTimeout(r,600));
+    await new Promise(r=>setTimeout(r,400));
     removeOverlay();
     document.getElementById('run-btn').disabled=false;
 
     renderResults({product,category,market,brand,detail,data});
     saveHistory({product,category,market,brand,data,time:Date.now()});
     renderHistory();
+
+    if(data._isFallback){
+      showToast('⚠️ AI 분석 서버 응답 없음 — 기본 템플릿 표시 중. 잠시 후 재시도해보세요.', 5000);
+    }
 
   } catch(e){
     clearInterval(iv);
@@ -616,7 +655,12 @@ function renderResults({product,category,market,brand,detail,data}){
   const compCards = comps.map(function(c,i){
     const stars='⭐'.repeat(Math.round(c.rating||4));
     const tags=(c.tags||[]).map(function(t){return '<span class="comp-tag">'+t+'</span>';}).join('');
+    const imgHtml = c.imageUrl
+      ? '<div class="comp-img" style="background-image:url(\''+c.imageUrl+'\')"></div>'
+      : '<div class="comp-img no-img">📦</div>';
     return '<div class="comp-card">'
+      +imgHtml
+      +'<div class="comp-body">'
       +'<div class="comp-rank">#'+(i+1)+' 경쟁사</div>'
       +'<div class="comp-name">'+(c.name||'경쟁사')+'</div>'
       +'<div class="comp-meta">'
@@ -629,6 +673,7 @@ function renderResults({product,category,market,brand,detail,data}){
       +'<div style="height:8px"></div>'
       +'<div class="comp-weakness"><div class="comp-label">⚠️ 약점·불만</div>'+(c.weakness||'')+'</div>'
       +(c.targetCustomer?'<div style="margin-top:10px;font-size:12px;color:var(--tx3)">🎯 타겟: '+c.targetCustomer+'</div>':'')
+      +'</div>'
       +'</div>';
   }).join('');
 
@@ -662,6 +707,7 @@ function renderResults({product,category,market,brand,detail,data}){
       +'<span class="chip chip-bl">'+comps.length+'개 경쟁사 분석</span>'
       +'<span class="chip chip-warn">리뷰 감성 '+pos+'% 긍정</span>'
       +(detail?'<span class="chip chip-pu">USP 분석 포함</span>':'')
+      +(data._isFallback?'<span class="chip" style="color:#ffb340;border-color:rgba(255,179,64,.5);background:rgba(255,179,64,.1)">⚠️ AI 응답 실패 — 기본 템플릿</span>':'')
     +'</div>'
   +'</div>'
   +'<div class="action-row">'
@@ -723,7 +769,10 @@ function downloadReport(){
   const neg=data.overallSentiment?.negative||17;
 
   const compRows=comps.map(function(c,i){
-    return '<tr><td>#'+(i+1)+'</td><td><strong>'+(c.name||'')+'</strong>'+(c.country?' ('+c.country+')':'')+'</td><td>'+(c.price||'')+'</td><td>⭐'+(c.rating||'')+' / '+(c.reviewCount||'')+'</td><td style="color:#00d4a0">'+(c.strength||'')+'</td><td style="color:#e84444">'+(c.weakness||'')+'</td></tr>';
+    const imgCell = c.imageUrl
+      ? '<img src="'+c.imageUrl+'" style="width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid #eee">'
+      : '<div style="width:64px;height:64px;background:#f0f0f0;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:24px;color:#aaa">📦</div>';
+    return '<tr><td>#'+(i+1)+'</td><td>'+imgCell+'</td><td><strong>'+(c.name||'')+'</strong>'+(c.country?' ('+c.country+')':'')+'</td><td>'+(c.price||'')+'</td><td>⭐'+(c.rating||'')+' / '+(c.reviewCount||'')+'</td><td style="color:#00d4a0">'+(c.strength||'')+'</td><td style="color:#e84444">'+(c.weakness||'')+'</td></tr>';
   }).join('');
 
   const posItems=(data.positivePatterns||[]).map(function(p){return '<li>'+p+'</li>';}).join('');
@@ -737,7 +786,7 @@ function downloadReport(){
     +'<h1>🔍 리뷰레이더 분석 보고서</h1>'
     +'<div class="sub">제품: <strong>'+product+'</strong> | 시장: <strong>'+marketLabel+'</strong>'+(brand?' | 브랜드: <strong>'+brand+'</strong>':'')+' | 분석일: '+dateStr+'</div>'
     +'<h2>🏆 경쟁사 분석 ('+comps.length+'개)</h2>'
-    +'<table><tr><th>#</th><th>브랜드</th><th>가격</th><th>평점/리뷰</th><th>강점</th><th>약점·불만</th></tr>'+compRows+'</table>'
+    +'<table><tr><th>#</th><th>이미지</th><th>브랜드</th><th>가격</th><th>평점/리뷰</th><th>강점</th><th>약점·불만</th></tr>'+compRows+'</table>'
     +'<h2>💬 리뷰 감성 분포</h2>'
     +'<div class="bar-wrap"><div class="bar-pos">'+pos+'% 긍정</div><div class="bar-neu">'+neu+'%</div><div class="bar-neg">'+neg+'% 부정</div></div>'
     +'<div class="sent-row"><div class="sent-box pos-box"><h3>👍 5★ 리뷰 패턴</h3><ul>'+posItems+'</ul></div><div class="sent-box neg-box"><h3>👎 1★ 불만 패턴</h3><ul>'+negItems+'</ul></div></div>'
